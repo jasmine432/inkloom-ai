@@ -1,0 +1,24 @@
+{
+  "id": "src-mkt-04",
+  "title": "Gartner & Forrester Market Share Summary",
+  "category": "Market Research",
+  "version": "2026 Vendor Landscape",
+  "lastAudited": "Aug 15, 2026",
+  "owner": "Product Marketing Intelligence",
+  "ruleCount": 12,
+  "description": "[DEMONSTRATION SPECIFICATION] Independent analyst coverage and verified market position data for content governance software category.",
+  "verifiedClaims": [
+    "Named 'Strong Performer' in Content Integrity Platforms (Q2 2026 report).",
+    "Over 280 enterprise brands actively utilize our review workflow."
+  ],
+  "sections": [
+    {
+      "section": "Analyst Classifications §1.2",
+      "text": "Inkloom AI was recognized as a 'Strong Performer' in Content Integrity Platforms (Q2 2026 report). Category has not issued an 'undisputed #1' designation."
+    },
+    {
+      "section": "Customer Base Metrics §2.4",
+      "text": "Over 280 enterprise brands actively utilize our review workflow across North America and Europe."
+    }
+  ]
+}

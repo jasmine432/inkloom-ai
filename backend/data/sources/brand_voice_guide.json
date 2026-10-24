@@ -1,0 +1,29 @@
+{
+  "id": "src-bg-01",
+  "title": "Inkloom Global Brand Voice & Style Guide",
+  "category": "Brand Identity",
+  "version": "v4.2 (Q3 2026 Release)",
+  "lastAudited": "Oct 14, 2026",
+  "owner": "Brand Strategy & Editorial Office",
+  "ruleCount": 38,
+  "description": "[DEMONSTRATION SPECIFICATION] Defines brand voice principles, capitalization rules, tone guidelines, and mandatory disclaimer language for external marketing.",
+  "verifiedClaims": [
+    "Proprietary product name is styled 'Inkloom AI', never 'InkLoom' or 'Inkloom.ai'.",
+    "Do not describe the platform as 'completely automated zero-risk publishing'.",
+    "Always emphasize human editorial control and verified enterprise provenance."
+  ],
+  "sections": [
+    {
+      "section": "Core Brand Pillars §2.1",
+      "text": "Do not describe the platform as 'completely automated zero-risk publishing'. Always emphasize human editorial control and verified enterprise provenance."
+    },
+    {
+      "section": "Naming & Trademark Standards §1.3",
+      "text": "The proprietary product name is styled 'Inkloom AI', never 'InkLoom' or 'Inkloom.ai'."
+    },
+    {
+      "section": "AI Ethics & Governance §6.4",
+      "text": "Any automated publishing integration must highlight mandatory 'Human-in-the-Loop Approval Gates' to satisfy enterprise risk frameworks."
+    }
+  ]
+}

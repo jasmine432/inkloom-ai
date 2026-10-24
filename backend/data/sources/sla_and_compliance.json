@@ -1,0 +1,33 @@
+{
+  "id": "src-leg-03",
+  "title": "Q3 Enterprise SLA & Compliance Warranty",
+  "category": "Legal & Compliance",
+  "version": "v1.9 - Legal Counsel Approved",
+  "lastAudited": "Oct 02, 2026",
+  "owner": "General Counsel & Risk Compliance",
+  "ruleCount": 19,
+  "description": "[DEMONSTRATION SPECIFICATION] Binding legal guarantees, standard uptime covenants, regulatory privacy disclosures, and statutory compliance boundaries.",
+  "verifiedClaims": [
+    "Uptime SLA is 99.9% availability for Enterprise tier, 99.5% for Business tier.",
+    "Marketing claims asserting '100% legal indemnity against all defamation' or complete liability elimination are explicitly forbidden by general counsel.",
+    "No marketing material may assert statutory exemption, immunity, or indemnification from governmental inquiries or environmental penalties."
+  ],
+  "sections": [
+    {
+      "section": "Section 4.1: Availability Commitments",
+      "text": "Inkloom guarantees 99.9% monthly service availability for Enterprise subscriptions, and 99.5% for standard Business tiers."
+    },
+    {
+      "section": "Section 9.3: Prohibited Marketing Claims",
+      "text": "Marketing claims claiming '100% legal indemnity against all defamation' or total liability elimination are explicitly forbidden by general counsel."
+    },
+    {
+      "section": "Compliance Covenants §11.2",
+      "text": "No marketing material may assert statutory exemption, immunity, or indemnification from governmental inquiries or environmental penalties."
+    },
+    {
+      "section": "Special Product Features §14",
+      "text": "Any planned credit-generation features remain exploratory and require Fintech compliance review prior to public advertisement."
+    }
+  ]
+}

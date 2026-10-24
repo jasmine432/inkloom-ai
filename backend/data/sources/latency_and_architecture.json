@@ -1,0 +1,33 @@
+{
+  "id": "src-prod-02",
+  "title": "Enterprise Architecture & Latency Benchmark 2026",
+  "category": "Product Benchmark",
+  "version": "v2.8 - Verified Eng Specs",
+  "lastAudited": "Sep 28, 2026",
+  "owner": "Principal Systems Architect",
+  "ruleCount": 24,
+  "description": "[DEMONSTRATION SPECIFICATION] Certified infrastructure performance metrics, query latency limits, and model inference SLAs measured across cloud clusters.",
+  "verifiedClaims": [
+    "Average verification latency for standard 1,500-word draft is 4.2 seconds under p95.",
+    "Verified cluster capacity supports ingestion of up to 500 simultaneous brand guideline PDFs and Markdown sources per tenant.",
+    "Zero customer training retention: customer drafts are never stored in third-party model weights."
+  ],
+  "sections": [
+    {
+      "section": "Infrastructure Throughput §3.2",
+      "text": "Verified cluster capacity supports ingestion of up to 500 simultaneous brand guideline PDFs and Markdown sources per tenant."
+    },
+    {
+      "section": "Latency & Privacy SLA §1.4",
+      "text": "Average verification latency for standard 1,500-word draft is 4.2 seconds under p95. Zero customer training retention: customer drafts are never stored in third-party model weights."
+    },
+    {
+      "section": "IP Disclosure Note §5.1",
+      "text": "Pending patent disclosure for vector retrieval pipeline scheduled for Q1 2027 filing. Public disclosure of proprietary algorithms remains restricted."
+    },
+    {
+      "section": "Efficiency Benchmarks §4.7",
+      "text": "Pruning optimization saves an estimated 19.4M kWh across annualized cluster load compared to unoptimized dense transformer baselines."
+    }
+  ]
+}

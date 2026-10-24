@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #F7F5F0;
+    --bg-card: #FFFFFF;
+    --bg-secondary: #EFECE5;
+    --text-primary: #211F1B;
+    --text-secondary: #716D65;
+    --border-warm: #E4E0D7;
+    --btn-primary: #211F1B;
+    --btn-primary-text: #FFFFFF;
+    --nav-selected-bg: #EAE6DD;
+    --nav-selected-text: #211F1B;
+    --logo-bg: #211F1B;
+    --logo-icon: #FFFFFF;
+  }
+
+  html, body {
+    background-color: #F7F5F0;
+    color: #211F1B;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  ::selection {
+    background-color: #EAE6DD;
+    color: #211F1B;
+  }
+}
+
+.font-editorial {
+  font-family: 'Newsreader', Georgia, serif;
+}
+
+.font-sans-ui {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.font-mono-code {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom warm subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #E4E0D7;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #716D65;
+}

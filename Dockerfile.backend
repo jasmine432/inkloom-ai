@@ -1,0 +1,59 @@
+# ==============================================================================
+# Inkloom AI - Production Backend Dockerfile
+# FastAPI Application with Python 3.12 Slim & Non-Root Execution
+# ==============================================================================
+
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies if needed for C-extensions (psycopg)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# Final Runtime Stage
+FROM python:3.12-slim AS runner
+
+WORKDIR /app
+
+# Install runtime PostgreSQL client libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
+
+# Create non-root application user
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/sh -m appuser
+
+# Copy backend application source code, sources, and migrations
+COPY --chown=appuser:appgroup backend /app/backend
+COPY --chown=appuser:appgroup pytest.ini /app/pytest.ini
+
+# Switch to non-root user
+USER appuser
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=production \
+    HOST=0.0.0.0 \
+    PORT=8000
+
+EXPOSE 8000
+
+# Container Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Production WSGI/ASGI Command
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]

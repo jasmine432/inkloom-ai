@@ -1,0 +1,67 @@
+# ==============================================================================
+# Inkloom AI - Docker Build Context Exclusions (.dockerignore)
+# Prevents secrets, environment files, dependencies, caches, and test artifacts
+# from being sent to Docker build daemons or copied into container images.
+# ==============================================================================
+
+# Git Metadata
+.git/
+.gitignore
+
+# Secrets & Environment Files (Strictly runtime injected)
+.env
+.env.*
+*.env
+backend/.env
+backend/.env.*
+backend/*.env
+
+# Firebase & Cloud Credentials
+*service-account*.json
+*firebase-adminsdk*.json
+credentials.json
+client_secret*.json
+*.pem
+*.key
+*.cert
+*.crt
+
+# Python Virtual Environments & Bytecode
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Node Dependencies & Local Build Artifacts
+node_modules/
+dist/
+dist-ssr/
+.eslintcache
+
+# Test Artifacts, Coverage & Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.log
+logs/
+
+# Local SQLite Databases & Transient Data
+*.sqlite
+*.sqlite3
+*.db
+backend/data/*.db
+backend/data/*.sqlite*
+
+# OS & Editor Metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
