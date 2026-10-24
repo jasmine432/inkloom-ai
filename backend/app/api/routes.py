@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from typing import List, Optional
 import uuid
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status
+import re
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.schemas.source import ApprovedSource
@@ -41,24 +42,57 @@ logger = logging.getLogger("inkloom_routes")
 router = APIRouter(prefix="/api")
 
 
+def sanitize_health_db_error(error_msg: Optional[str]) -> Optional[str]:
+    """
+    Sanitizes database error messages returned in the health endpoint.
+    Strips credentials, connection strings, private keys, and sensitive internal paths.
+    """
+    if not error_msg:
+        return None
+    # Strip passwords
+    sanitized = re.sub(r':([^@/\s]+)@', ':***@', str(error_msg))
+    # Strip any potential private keys
+    sanitized = re.sub(r'-----BEGIN[^-]+-----.*?-----END[^-]+-----', '[REDACTED_KEY]', sanitized, flags=re.DOTALL)
+    # Strip complete connection URIs with query params
+    sanitized = re.sub(r'(?:postgresql\+[a-z0-9_]+|postgres|sqlite)://[^\s\'"]+', '[database_uri]', sanitized)
+    # Strip internal absolute filesystem paths (Windows D:\... or C:\... and Linux /app/...)
+    sanitized = re.sub(r'[A-Za-z]:\\[^\\/:*?"<>|\r\n]+(?:\\[^\\/:*?"<>|\r\n]+)*', '[internal_path]', sanitized)
+    sanitized = re.sub(r'(?:/[a-zA-Z0-9_.-]+){2,}', '[internal_path]', sanitized)
+    # Limit length to prevent log or buffer flooding
+    if len(sanitized) > 250:
+        sanitized = sanitized[:250] + "..."
+    return sanitized
+
+
 class UpdateFindingDecisionRequest(BaseModel):
     decision: ReviewerDecision
     notes: Optional[str] = None
 
 
 @router.get("/health", response_model=HealthResponse, tags=["Health"])
-def get_health() -> HealthResponse:
+def get_health(response: Response) -> HealthResponse:
     """
     Health check endpoint returning service status, configured LLM provider,
     verified approved sources count, auth readiness, and database connection status.
+    Returns HTTP 503 if a configured database connection fails.
+    Preserves HTTP 200 when a database is intentionally unconfigured for local dev.
     """
     db_ok = check_db_connectivity()
     dialect = get_db_dialect()
     db_name = get_active_database_name()
     last_err = get_last_db_error() if not db_ok else None
 
+    if last_err:
+        last_err = sanitize_health_db_error(last_err)
+
+    if settings.is_db_configured and not db_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        overall_status = "degraded"
+    else:
+        overall_status = "ok"
+
     return HealthResponse(
-        status="ok",
+        status=overall_status,
         version="1.0.0",
         llmProvider=settings.LLM_PROVIDER,
         isLlmConfigured=settings.is_llm_configured,

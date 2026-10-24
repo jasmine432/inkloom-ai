@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     DATABASE_URL: Optional[str] = None
     SUPABASE_URL: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    SUPABASE_PROJECT_REF: Optional[str] = None
+    EXPECTED_SUPABASE_HOST: Optional[str] = None
+    EXPECTED_SUPABASE_DB_NAME: str = "postgres"
+    ENFORCE_SSL: bool = True
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
     DB_ECHO: bool = False

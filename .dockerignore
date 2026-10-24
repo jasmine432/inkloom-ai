@@ -53,12 +53,18 @@ htmlcov/
 *.log
 logs/
 
-# Local SQLite Databases & Transient Data
+# Local SQLite Databases, Dumps & Transient Data
 *.sqlite
 *.sqlite3
 *.db
 backend/data/*.db
 backend/data/*.sqlite*
+*.dump
+backend/data/*.sql
+backend/data/*.dump
+*.sql.tar
+*.sql.gz
+!backend/migrations/*.sql
 
 # OS & Editor Metadata
 .idea/

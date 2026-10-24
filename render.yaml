@@ -1,0 +1,61 @@
+services:
+  # Inkloom AI — Production Backend API
+  - type: web
+    name: inkloom-backend
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ENVIRONMENT
+        value: production
+      - key: ALLOW_DEV_SIMULATION_TOKENS
+        value: "false"
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: SOURCES_DIR
+        value: backend/data/sources
+      - key: EXPECTED_SUPABASE_HOST
+        value: aws-0-ap-northeast-2.pooler.supabase.com
+      - key: EXPECTED_SUPABASE_DB_NAME
+        value: postgres
+      - key: SUPABASE_PROJECT_REF
+        value: tluzfifrrqjwdjghwcck
+      - key: ENFORCE_SSL
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  # Inkloom AI — Production Frontend SPA
+  - type: web
+    name: inkloom-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false

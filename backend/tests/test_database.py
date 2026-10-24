@@ -303,7 +303,7 @@ def test_polar_logistics_isolation_enforcement(monkeypatch):
 
 
 def test_database_isolation_enforces_inkloom_ai_name(monkeypatch):
-    """Verify that Inkloom AI PostgreSQL URLs must specify the inkloom_ai database."""
+    """Verify that Inkloom AI local PostgreSQL URLs must strictly specify the inkloom_ai database."""
     from backend.app.config import settings
     from backend.app.services.database import get_normalized_database_url
 
@@ -312,7 +312,119 @@ def test_database_isolation_enforces_inkloom_ai_name(monkeypatch):
         "DATABASE_URL",
         "postgresql+psycopg://postgres:fake_pass@localhost:5432/some_other_db",
     )
-    with pytest.raises(ValueError, match="Inkloom AI must connect strictly to 'inkloom_ai'"):
+    with pytest.raises(ValueError, match="must target 'inkloom_ai' strictly"):
+        get_normalized_database_url()
+
+
+def test_remote_host_missing_expected_supabase_host_rejection(monkeypatch):
+    """Verify that remote database connections fail when EXPECTED_SUPABASE_HOST is not configured."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@db.xyzcompany.supabase.co:5432/postgres?sslmode=require",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", None)
+    with pytest.raises(ValueError, match="Remote database connections require an explicitly configured EXPECTED_SUPABASE_HOST"):
+        get_normalized_database_url()
+
+
+def test_remote_host_exact_match_enforcement(monkeypatch):
+    """Verify that remote connections with mismatching host are rejected, even if ending in supabase.co."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@attacker-project.supabase.co:5432/postgres?sslmode=require",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "db.legitproject.supabase.co")
+    with pytest.raises(ValueError, match="does not match explicitly configured EXPECTED_SUPABASE_HOST"):
+        get_normalized_database_url()
+
+
+def test_remote_database_name_validation(monkeypatch):
+    """Verify that remote connections must match EXPECTED_SUPABASE_DB_NAME (defaults to postgres)."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@db.legitproject.supabase.co:5432/wrong_db?sslmode=require",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "db.legitproject.supabase.co")
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_DB_NAME", "postgres")
+    with pytest.raises(ValueError, match="does not match EXPECTED_SUPABASE_DB_NAME 'postgres'"):
+        get_normalized_database_url()
+
+
+def test_remote_tls_enforcement(monkeypatch):
+    """Verify that remote database connections must enforce TLS when ENFORCE_SSL is True."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    # Missing sslmode
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@db.legitproject.supabase.co:5432/postgres",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "db.legitproject.supabase.co")
+    monkeypatch.setattr(settings, "ENFORCE_SSL", True)
+    with pytest.raises(ValueError, match="Remote database connections must enforce TLS"):
+        get_normalized_database_url()
+
+    # Insecure sslmode=disable
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@db.legitproject.supabase.co:5432/postgres?sslmode=disable",
+    )
+    with pytest.raises(ValueError, match="Remote database connections must enforce TLS"):
+        get_normalized_database_url()
+
+
+def test_supabase_project_ref_validation(monkeypatch):
+    """Verify that connection credentials must match SUPABASE_PROJECT_REF when configured."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres.wrongref:fake_pass@db.legitproject.supabase.co:5432/postgres?sslmode=require",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "db.legitproject.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_PROJECT_REF", "correctprojectref")
+    with pytest.raises(ValueError, match="Connection credentials do not match SUPABASE_PROJECT_REF"):
+        get_normalized_database_url()
+
+    # When ref matches username: postgres.correctprojectref
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres.correctprojectref:fake_pass@db.legitproject.supabase.co:5432/postgres?sslmode=require",
+    )
+    url = get_normalized_database_url()
+    assert "postgres.correctprojectref" in url
+
+
+def test_unconditional_polar_logistics_rejection_even_on_remote(monkeypatch):
+    """Verify that polar_logistics is rejected unconditionally, even if host is configured as expected."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:fake_pass@db.legitproject.supabase.co:5432/polar_logistics?sslmode=require",
+    )
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "db.legitproject.supabase.co")
+    with pytest.raises(ValueError, match="Inkloom AI cannot connect to 'polar_logistics'. Execution terminated unconditionally."):
         get_normalized_database_url()
 
 
@@ -334,6 +446,46 @@ def test_health_endpoint_reports_dialect_and_dbname():
     assert "dbDialect" in data
     assert "dbStatus" in data
     assert "dbName" in data
+
+
+def test_health_check_returns_503_on_configured_db_failure(monkeypatch):
+    """Verify that GET /api/health returns HTTP 503 when a configured database fails connectivity."""
+    from backend.app.config import settings
+    from backend.app.services import database as db_service
+
+    monkeypatch.setattr(settings, "DATABASE_URL", "postgresql+psycopg://postgres:pwd@localhost:5432/inkloom_ai")
+    monkeypatch.setattr(db_service, "check_db_connectivity", lambda: False)
+    monkeypatch.setattr(
+        db_service,
+        "get_last_db_error",
+        lambda: "connection to postgresql://postgres:secret_pass@localhost:5432/inkloom_ai failed (D:\\secret\\path\\conn.py)",
+    )
+
+    res = client.get("/api/health")
+    assert res.status_code == 503
+    data = res.json()
+    assert data["status"] == "degraded"
+    assert data["isDbConfigured"] is True
+    assert data["dbStatus"] == "disconnected"
+    assert data["dbError"] is not None
+    # Confirm no credentials or sensitive internal paths leaked
+    assert "secret_pass" not in data["dbError"]
+    assert "D:\\secret" not in data["dbError"]
+
+
+def test_health_check_returns_200_when_db_unconfigured(monkeypatch):
+    """Verify that GET /api/health returns HTTP 200 when database is not configured for local dev."""
+    from backend.app.config import settings
+    from backend.app.services import database as db_service
+
+    monkeypatch.setattr(settings, "DATABASE_URL", None)
+    monkeypatch.setattr(db_service, "check_db_connectivity", lambda: True)
+
+    res = client.get("/api/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["isDbConfigured"] is False
 
 
 def test_runtime_wire_level_guard_rejects_forbidden_database(monkeypatch):
@@ -390,4 +542,5 @@ def test_runtime_wire_level_init_db_rejects_forbidden_database(monkeypatch):
 
     with pytest.raises(ValueError, match="Database isolation violation"):
         db_service.init_db()
+
 

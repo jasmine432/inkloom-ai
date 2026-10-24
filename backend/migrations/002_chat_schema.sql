@@ -6,11 +6,14 @@
 -- Multi-tenancy: Strict row-level tenant isolation enforced on every record.
 -- ==============================================================================
 
--- Safety Guard: Ensure this migration executes strictly on 'inkloom_ai'
+-- Safety Guard: Reject polar_logistics unconditionally, permit only 'inkloom_ai' or Supabase 'postgres'
 DO $$
 BEGIN
-    IF current_database() != 'inkloom_ai' THEN
-        RAISE EXCEPTION 'Database isolation violation: Migration 002 cannot execute on database "%". Target must be strictly "inkloom_ai".', current_database();
+    IF current_database() = 'polar_logistics' THEN
+        RAISE EXCEPTION 'Database isolation violation: Inkloom AI migrations cannot execute on "polar_logistics". Execution terminated unconditionally.';
+    END IF;
+    IF current_database() NOT IN ('inkloom_ai', 'postgres') THEN
+        RAISE EXCEPTION 'Database isolation violation: Migration 002 cannot execute on database "%". Target must be strictly "inkloom_ai" (local) or "postgres" (Supabase).', current_database();
     END IF;
 END $$;
 

@@ -23,10 +23,90 @@ def sanitize_db_url_or_error(message: str) -> str:
     return re.sub(r':([^@/\s]+)@', ':***@', message)
 
 
+def validate_database_target(parsed_url, live_db_name: Optional[str] = None) -> None:
+    """
+    Validates database targets against strict tenancy and isolation safeguards.
+    - Unconditionally rejects 'polar_logistics' in all environments.
+    - Local connections (localhost, 127.0.0.1, host.docker.internal, empty) must strictly target 'inkloom_ai'.
+    - Remote connections require an explicitly configured EXPECTED_SUPABASE_HOST (no suffix fallbacks).
+    - Remote connections must match EXPECTED_SUPABASE_HOST, EXPECTED_SUPABASE_DB_NAME, and TLS (sslmode).
+    - If SUPABASE_PROJECT_REF is set, connection credentials/host must reflect that project reference.
+    """
+    backend_name = parsed_url.get_backend_name() if hasattr(parsed_url, "get_backend_name") else ""
+    if backend_name and backend_name != "postgresql":
+        return
+
+    target_db = (getattr(parsed_url, "database", "") or "").strip().lower()
+    actual_db = (live_db_name or target_db).strip().lower()
+    host = (getattr(parsed_url, "host", "") or "").strip().lower()
+    username = (getattr(parsed_url, "username", "") or "").strip()
+    query_params = getattr(parsed_url, "query", {})
+
+    # 1. Unconditional check: polar_logistics is strictly forbidden under all circumstances
+    if target_db == "polar_logistics" or actual_db == "polar_logistics":
+        raise ValueError(
+            "Database isolation violation: Inkloom AI cannot connect to 'polar_logistics'. "
+            "Execution terminated unconditionally."
+        )
+
+    # 2. Local connections: must strictly target 'inkloom_ai'
+    is_local_host = host in ("", "localhost", "127.0.0.1", "host.docker.internal")
+    if is_local_host:
+        if actual_db != "inkloom_ai":
+            raise ValueError(
+                f"Database isolation violation: Local PostgreSQL connections must target 'inkloom_ai' strictly. "
+                f"(Attempted: '{actual_db}' on host '{host}')."
+            )
+        return
+
+    # 3. Remote connections: require explicitly configured exact hostname (no wildcard/suffix fallback)
+    if not settings.EXPECTED_SUPABASE_HOST or not settings.EXPECTED_SUPABASE_HOST.strip():
+        raise ValueError(
+            "Database security violation: Remote database connections require an explicitly "
+            "configured EXPECTED_SUPABASE_HOST. Generic suffix fallbacks are not permitted."
+        )
+
+    expected_host = settings.EXPECTED_SUPABASE_HOST.strip().lower()
+    if host != expected_host:
+        raise ValueError(
+            f"Database isolation violation: Remote host '{host}' does not match explicitly "
+            f"configured EXPECTED_SUPABASE_HOST '{expected_host}'."
+        )
+
+    # Validate expected remote database name (defaults to 'postgres')
+    expected_db = (settings.EXPECTED_SUPABASE_DB_NAME or "postgres").strip().lower()
+    if actual_db != expected_db:
+        raise ValueError(
+            f"Database isolation violation: Remote database '{actual_db}' does not match "
+            f"EXPECTED_SUPABASE_DB_NAME '{expected_db}'."
+        )
+
+    # Validate Supabase project reference if configured
+    if settings.SUPABASE_PROJECT_REF and settings.SUPABASE_PROJECT_REF.strip():
+        project_ref = settings.SUPABASE_PROJECT_REF.strip().lower()
+        has_ref_in_user = project_ref in username.lower()
+        has_ref_in_host = project_ref in host
+        if not (has_ref_in_user or has_ref_in_host):
+            raise ValueError(
+                f"Database isolation violation: Connection credentials do not match "
+                f"SUPABASE_PROJECT_REF '{settings.SUPABASE_PROJECT_REF}'."
+            )
+
+    # Validate TLS enforcement on remote connections
+    if settings.ENFORCE_SSL:
+        sslmode = str(query_params.get("sslmode", "")).strip().lower()
+        if sslmode not in ("require", "verify-ca", "verify-full"):
+            raise ValueError(
+                "Database security violation: Remote database connections must enforce TLS "
+                "(sslmode=require, verify-ca, or verify-full)."
+            )
+
+
 def get_normalized_database_url() -> str:
     """
     Returns the normalized database connection URL.
-    Supports PostgreSQL (via psycopg) strictly for 'inkloom_ai',
+    Validates isolation and security constraints before returning.
+    Supports PostgreSQL (via psycopg) strictly for validated targets,
     with graceful fallback to local SQLite when PostgreSQL is unconfigured.
     """
     db_url = settings.DATABASE_URL
@@ -41,17 +121,7 @@ def get_normalized_database_url() -> str:
 
         parsed = make_url(url)
         if parsed.get_backend_name() == "postgresql":
-            target_db = (parsed.database or "").strip().lower()
-            if target_db == "polar_logistics":
-                raise ValueError(
-                    "Database isolation violation: Inkloom AI cannot connect to 'polar_logistics'. "
-                    "Inkloom AI must connect strictly to its dedicated database 'inkloom_ai'."
-                )
-            if target_db and target_db != "inkloom_ai":
-                raise ValueError(
-                    f"Database isolation violation: Inkloom AI must connect strictly to 'inkloom_ai' "
-                    f"(configured: '{target_db}')."
-                )
+            validate_database_target(parsed)
         return url
 
     # Default fallback for local development or testing when PostgreSQL is intentionally unconfigured
@@ -91,6 +161,7 @@ def get_engine() -> Engine:
         logger.info("Database URL change detected; disposing previous engine.")
         reset_engine()
 
+    parsed = make_url(url)
     is_sqlite = url.startswith("sqlite")
 
     connect_args = {}
@@ -109,9 +180,13 @@ def get_engine() -> Engine:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
     else:
-        # PostgreSQL connection pooling
+        # If targeting a transaction pooler (port 6543), disable Psycopg 3 prepared statements
+        if parsed.port == 6543:
+            connect_args["prepare_threshold"] = None
+
         _engine = create_engine(
             url,
+            connect_args=connect_args,
             pool_size=settings.DB_POOL_SIZE,
             max_overflow=settings.DB_MAX_OVERFLOW,
             pool_pre_ping=True,
@@ -134,31 +209,38 @@ def get_session_factory() -> sessionmaker:
 
 def init_db(engine: Optional[Engine] = None) -> None:
     """
-    Initializes database schema, creating tables and indexes idempotently.
-    Enforces runtime wire-level guard ensuring the active database is strictly 'inkloom_ai'.
+    Initializes and verifies database schema.
+    Enforces runtime wire-level guard ensuring the active database is validated.
+    In production mode, verifies table existence and prevents Base.metadata.create_all()
+    from bypassing canonical SQL migrations.
     """
     target_engine = engine or get_engine()
     if target_engine.dialect.name == "postgresql":
         with target_engine.connect() as conn:
             actual_db = conn.execute(text("SELECT current_database()")).scalar()
-            if actual_db == "polar_logistics":
-                raise ValueError(
-                    "Database isolation violation: Attempted to run schema initialization on forbidden database 'polar_logistics'. "
-                    "Inkloom AI must connect strictly to 'inkloom_ai'."
+            validate_database_target(target_engine.url, live_db_name=actual_db)
+
+    # In production, require schema initialization via migrations rather than runtime DDL
+    if settings.ENVIRONMENT.lower() == "production":
+        with target_engine.connect() as conn:
+            table_check = conn.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='profiles'")
+            ).scalar()
+            if not table_check:
+                raise RuntimeError(
+                    "Production database schema uninitialized: table 'profiles' not found. "
+                    "Run canonical SQL migrations (001_initial_schema.sql, 002_chat_schema.sql) before starting."
                 )
-            if actual_db != "inkloom_ai":
-                raise ValueError(
-                    f"Database isolation violation: Connected PostgreSQL database is '{actual_db}', "
-                    f"must be strictly 'inkloom_ai'."
-                )
-    Base.metadata.create_all(bind=target_engine)
-    logger.info("Database schema initialized and verified.")
+        logger.info("Production database schema verified (runtime DDL bypass prevented).")
+    else:
+        Base.metadata.create_all(bind=target_engine)
+        logger.info("Database schema initialized and verified.")
 
 
 def check_db_connectivity() -> bool:
     """
     Verifies live connectivity to the configured database.
-    Enforces runtime query verification that the connected database is strictly 'inkloom_ai'.
+    Enforces runtime query verification that the connected database meets isolation rules.
     Captures sanitized error message without exposing passwords if connection fails.
     """
     global _last_db_error
@@ -168,16 +250,7 @@ def check_db_connectivity() -> bool:
             conn.execute(text("SELECT 1"))
             if engine.dialect.name == "postgresql":
                 actual_db = conn.execute(text("SELECT current_database()")).scalar()
-                if actual_db == "polar_logistics":
-                    raise ValueError(
-                        "Database isolation violation: Connected to forbidden database 'polar_logistics'. "
-                        "Inkloom AI must connect strictly to 'inkloom_ai'."
-                    )
-                if actual_db != "inkloom_ai":
-                    raise ValueError(
-                        f"Database isolation violation: Connected PostgreSQL database is '{actual_db}', "
-                        f"must be strictly 'inkloom_ai'."
-                    )
+                validate_database_target(engine.url, live_db_name=actual_db)
         _last_db_error = None
         return True
     except Exception as e:
@@ -185,6 +258,7 @@ def check_db_connectivity() -> bool:
         _last_db_error = sanitized
         logger.warning("Database connectivity check failed: %s", sanitized)
         return False
+
 
 
 def get_last_db_error() -> Optional[str]:
