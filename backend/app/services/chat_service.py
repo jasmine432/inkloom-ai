@@ -74,20 +74,24 @@ class ChatService:
         cls._ensure_profile(db, user_id, user_email, user_name)
 
         if conversation_id:
-            stmt = select(ConversationModel).where(
-                ConversationModel.id == conversation_id,
-                ConversationModel.user_id == user_id,
-            )
-            conv = db.scalar(stmt)
-            if not conv:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Conversation not found or access denied.",
+            # If transitioning from an unauthenticated public conversation, create a persistent DB conversation
+            if conversation_id.startswith("conv_pub_"):
+                conversation_id = None
+            else:
+                stmt = select(ConversationModel).where(
+                    ConversationModel.id == conversation_id,
+                    ConversationModel.user_id == user_id,
                 )
-            if audit_id and not conv.audit_id:
-                conv.audit_id = audit_id
-                db.flush()
-            return conv
+                conv = db.scalar(stmt)
+                if not conv:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Conversation not found or access denied.",
+                    )
+                if audit_id and not conv.audit_id:
+                    conv.audit_id = audit_id
+                    db.flush()
+                return conv
 
         # Generate a clean title from the initial message
         title = "New conversation"
@@ -209,27 +213,65 @@ class ChatService:
     async def process_chat_message(
         cls,
         db: Session,
-        user_id: str,
+        user_id: Optional[str],
         request: ChatRequest,
         user_email: Optional[str] = None,
         user_name: Optional[str] = None,
     ) -> ChatMessageResponse:
         """
         Processes a user chat message:
-        1. Validates input and rate limits.
-        2. Retrieves or creates conversation.
-        3. Loads optional audit context verifying user ownership.
+        1. Validates input length and non-empty content.
+        2. Supports safe public exploration for unauthenticated users without database persistence.
+        3. Persists conversation and messages strictly for authenticated users with user isolation.
         4. Retrieves relevant approved source passages.
         5. Formulates AI response via Gemini or deterministic source engine.
-        6. Persists conversation and returns verified response.
+        6. Returns structured response with verifiable citations and suggested prompts.
         """
         clean_message = request.message.strip()
         if not clean_message:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Chat message cannot be empty.",
+                detail="Chat message cannot be empty or contain only whitespace.",
             )
 
+        if len(clean_message) > 4000:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Chat message exceeds maximum allowed length of 4000 characters.",
+            )
+
+        # ------------------------------------------------------------------
+        # Case A: Safe Public Chat (Unauthenticated visitors)
+        # ------------------------------------------------------------------
+        if not user_id:
+            conv_id = request.conversation_id or f"conv_pub_{uuid.uuid4().hex[:12]}"
+
+            # Retrieve ground-truth source passages
+            retrieved_passages = retriever.retrieve(clean_message, top_k=4, min_score=12)
+
+            # Generate Assistant response
+            reply_text, evidence_items, related_findings, suggested_prompts = await cls._generate_reply(
+                user_message=clean_message,
+                history=[],
+                audit_context=None,
+                retrieved_passages=retrieved_passages,
+            )
+
+            assistant_msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+            return ChatMessageResponse(
+                id=assistant_msg_id,
+                conversationId=conv_id,
+                role="assistant",
+                content=reply_text,
+                evidence=evidence_items,
+                relatedFindings=related_findings,
+                suggestedPrompts=suggested_prompts,
+                createdAt=datetime.now(timezone.utc).isoformat(),
+            )
+
+        # ------------------------------------------------------------------
+        # Case B: Authenticated User Chat (Persistent in PostgreSQL)
+        # ------------------------------------------------------------------
         # 1. Retrieve or create conversation
         conversation = cls.get_or_create_conversation(
             db=db,

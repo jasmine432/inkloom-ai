@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     FIREBASE_PRIVATE_KEY: Optional[str] = None
     REQUIRE_EMAIL_VERIFIED: bool = True
     AUTH_RATE_LIMIT_PER_MINUTE: int = 60
+    CHAT_RATE_LIMIT_PER_MINUTE: int = 30
     ALLOW_DEV_SIMULATION_TOKENS: bool = True
 
     # Evaluation pacing and rate-limit settings (15 RPM safe pacing: 60s / 15 = 4.0s + 0.5s buffer)
@@ -100,9 +101,11 @@ class Settings(BaseSettings):
     def is_firebase_configured(self) -> bool:
         if self.FIREBASE_CREDENTIALS_PATH and Path(self.FIREBASE_CREDENTIALS_PATH).exists():
             return True
-        if self.FIREBASE_PROJECT_ID and self.FIREBASE_CLIENT_EMAIL and self.FIREBASE_PRIVATE_KEY:
-            return True
-        if bool(self.FIREBASE_PROJECT_ID and self.FIREBASE_PROJECT_ID.strip()):
+        if (
+            self.FIREBASE_PROJECT_ID
+            and self.FIREBASE_CLIENT_EMAIL
+            and self.FIREBASE_PRIVATE_KEY
+        ):
             return True
         return False
 

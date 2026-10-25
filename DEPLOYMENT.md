@@ -55,7 +55,8 @@ These variables are loaded strictly on the server and must **NEVER** be committe
 | `CORS_ORIGINS` | Permitted frontend origins | `https://yourdomain.com,https://app.yourdomain.com` |
 | `ALLOW_DEV_SIMULATION_TOKENS` | Reject mock tokens | `false` *(Critical: must be false in production)* |
 | `REQUIRE_EMAIL_VERIFIED` | Enforce verification | `true` |
-| `AUTH_RATE_LIMIT_PER_MINUTE` | Rate limiting | `60` |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | Rate limiting on auth endpoints | `60` |
+| `CHAT_RATE_LIMIT_PER_MINUTE` | Rate limiting on AI assistant chat | `30` |
 | `LLM_PROVIDER` | Fact-checking engine | `gemini` |
 | `GEMINI_API_KEY` | Server-side Gemini API key | Rotated secret from Google AI Studio |
 | `GEMINI_MODEL` | Auditor model | `gemini-3.5-flash-lite` |
@@ -63,8 +64,10 @@ These variables are loaded strictly on the server and must **NEVER** be committe
 | `DATABASE_URL` | PostgreSQL connection URL | `postgresql+psycopg://user:pass@host:5432/inkloom_ai` |
 | `DB_POOL_SIZE` | SQLAlchemy connection pool | `10` |
 | `DB_MAX_OVERFLOW` | Overflow pool connections | `20` |
-| `FIREBASE_PROJECT_ID` | Server verification project | `[project-id]` |
-| `FIREBASE_CREDENTIALS_PATH` | Service account JSON path | `backend/service-account.json` |
+| `FIREBASE_PROJECT_ID` | Server verification project | `inkloom-ai-6c608` |
+| `FIREBASE_CLIENT_EMAIL` | Service account client email (Render/Containers) | `firebase-adminsdk-xxx@inkloom-ai-6c608.iam.gserviceaccount.com` |
+| `FIREBASE_PRIVATE_KEY` | Service account private key (Render/Containers) | `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n` |
+| `FIREBASE_CREDENTIALS_PATH` | Service account JSON path (Local/VMs) | `backend/service-account.json` |
 
 ---
 
@@ -92,8 +95,25 @@ These variables are loaded strictly on the server and must **NEVER** be committe
 1. Click the gear icon (Project Settings) > **Service accounts** tab.
 2. Ensure **Firebase Admin SDK** is selected.
 3. Click **Generate new private key**, then confirm **Generate key**.
-4. Save the downloaded JSON file as `backend/service-account.json` on your server.
-5. Ensure file permissions are restricted: `chmod 600 backend/service-account.json`.
+4. Configure credentials in your environment using either method:
+   - **Method A (Render / Cloud Container)**: Open the downloaded JSON and copy the values into Render Dashboard (`inkloom-backend` > Environment):
+     - `FIREBASE_PROJECT_ID`: `"project_id"` value (e.g. `inkloom-ai-6c608`)
+     - `FIREBASE_CLIENT_EMAIL`: `"client_email"` value
+     - `FIREBASE_PRIVATE_KEY`: `"private_key"` value (include full `-----BEGIN PRIVATE KEY...-----`)
+   - **Method B (Local / VM Server)**: Save the downloaded file as `backend/service-account.json` and set `FIREBASE_CREDENTIALS_PATH=backend/service-account.json`. Ensure permissions are restricted (`chmod 600 backend/service-account.json`).
+
+### 4. Inkloom AI Assistant Chat & Access Policy
+- **Safe Public Chat (`POST /api/chat`)**: Allows unauthenticated visitors to query the AI assistant and verify claims without receiving 401 Unauthorized. Enforces IP-based sliding-window rate limiting (30 requests/minute per IP) and strict input validation (1–4000 characters). Operates statelessly without database foreign-key requirements.
+- **Authenticated Chat (`POST /api/chat`)**: When a valid Firebase ID token is attached, conversations and messages are persisted to PostgreSQL tied to the user's `uid`, allowing persistent multi-turn history.
+- **Protected Conversation Management**:
+  - `GET /api/chat/conversations` (strictly requires authenticated user)
+  - `GET /api/chat/conversations/{id}` (strictly requires authenticated owner)
+  - `DELETE /api/chat/conversations/{id}` (strictly requires verified owner)
+- **Protected Review Management**:
+  - `GET /api/reviews` (strictly requires authenticated user)
+  - `GET /api/reviews/{id}` (strictly requires authenticated owner)
+  - `PATCH /api/reviews/{id}/findings/{id}/decision` (strictly requires verified owner)
+  - `DELETE /api/reviews/{id}` (strictly requires verified owner)
 
 ---
 

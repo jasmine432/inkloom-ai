@@ -1,8 +1,9 @@
 import logging
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.schemas.chat import (
     ChatRequest,
     ChatMessageResponse,
@@ -12,8 +13,9 @@ from backend.app.schemas.chat import (
 from backend.app.services.firebase_auth import (
     AuthenticatedUser,
     get_current_user,
+    get_optional_authenticated_user,
     require_verified_user,
-    check_auth_rate_limit,
+    check_chat_rate_limit,
 )
 from backend.app.services.database import get_db
 from backend.app.services.chat_service import ChatService
@@ -25,26 +27,32 @@ router = APIRouter(prefix="/api/chat", tags=["Inkloom AI Assistant"])
 @router.post(
     "",
     response_model=ChatMessageResponse,
-    dependencies=[Depends(check_auth_rate_limit)],
+    dependencies=[Depends(check_chat_rate_limit)],
     summary="Submit message to Inkloom AI Assistant",
 )
 async def submit_chat_message(
     request: ChatRequest,
-    user: AuthenticatedUser = Depends(require_verified_user),
+    user: Optional[AuthenticatedUser] = Depends(get_optional_authenticated_user),
     db: Session = Depends(get_db),
 ) -> ChatMessageResponse:
     """
     Submits a message to the Inkloom AI Assistant.
-    Enforces user authentication, input length validation, source-grounded retrieval,
-    audit context cross-referencing, and persistent conversation logging.
+    Supports safe public exploration for unauthenticated visitors with IP-based rate limiting,
+    and persistent conversation history with tenant isolation for authenticated users.
     """
+    if user and settings.REQUIRE_EMAIL_VERIFIED and not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required before accessing this resource. Please check your inbox or resend verification.",
+        )
+
     try:
         response = await ChatService.process_chat_message(
             db=db,
-            user_id=user.uid,
+            user_id=user.uid if user else None,
             request=request,
-            user_email=user.email,
-            user_name=user.name,
+            user_email=user.email if user else None,
+            user_name=user.name if user else None,
         )
         return response
     except HTTPException:

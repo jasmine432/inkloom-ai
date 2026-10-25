@@ -16,35 +16,45 @@ export async function sendChatMessage(
   conversationId?: string | null,
   auditId?: string | null,
   token?: string | null
-): Promise<ChatMessage | null> {
-  try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const payload = {
-      message: message.trim(),
-      conversation_id: conversationId || null,
-      audit_id: auditId || null,
-    };
-
-    const res = await fetch(`${API_BASE_URL}/chat`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      return null;
-    }
-
-    return (await res.json()) as ChatMessage;
-  } catch {
-    return null;
+): Promise<ChatMessage> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token && token.trim()) {
+    headers['Authorization'] = `Bearer ${token.trim()}`;
   }
+
+  const payload = {
+    message: message.trim(),
+    conversation_id: conversationId || null,
+    audit_id: auditId || null,
+  };
+
+  const res = await fetch(`${API_BASE_URL}/chat`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    let errorMessage = `Assistant request failed (HTTP ${res.status})`;
+    try {
+      const errorJson = await res.json();
+      if (errorJson && errorJson.detail) {
+        errorMessage =
+          typeof errorJson.detail === 'string'
+            ? errorJson.detail
+            : JSON.stringify(errorJson.detail);
+      }
+    } catch {
+      if (res.statusText) {
+        errorMessage = `HTTP ${res.status}: ${res.statusText}`;
+      }
+    }
+    throw new Error(errorMessage);
+  }
+
+  return (await res.json()) as ChatMessage;
 }
 
 /**

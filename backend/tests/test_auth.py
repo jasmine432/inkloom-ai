@@ -7,6 +7,7 @@ from backend.app.services.firebase_auth import (
     AuthenticatedUser,
     firebase_auth_service,
     extract_bearer_token,
+    get_optional_authenticated_user,
     InMemoryRateLimiter,
 )
 
@@ -283,3 +284,53 @@ def test_protected_routes_reject_unverified_simulation_tokens():
         settings.ENVIRONMENT = original_env
         settings.ALLOW_DEV_SIMULATION_TOKENS = original_setting
         settings.REQUIRE_EMAIL_VERIFIED = original_verified_req
+
+
+def test_optional_authenticated_user_behavior():
+    """Verify get_optional_authenticated_user behavior for omitted, invalid, and valid tokens."""
+    # 1. Omitted header returns None
+    assert get_optional_authenticated_user(None) is None
+    assert get_optional_authenticated_user("") is None
+
+    # 2. Malformed header format raises 401
+    with pytest.raises(HTTPException) as exc_info:
+        get_optional_authenticated_user("Basic invalid")
+    assert exc_info.value.status_code == 401
+    assert "Invalid Authorization header format" in exc_info.value.detail
+
+    # 3. Invalid token raises 401
+    def mock_invalid(token: str):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    firebase_auth_service.set_mock_verifier(mock_invalid)
+    with pytest.raises(HTTPException) as exc_info:
+        get_optional_authenticated_user("Bearer bad_token")
+    assert exc_info.value.status_code == 401
+
+    # 4. Valid token returns AuthenticatedUser
+    mock_user = AuthenticatedUser(uid="user_opt_1", email="opt@example.com", email_verified=True)
+    firebase_auth_service.set_mock_verifier(lambda t: mock_user)
+    result = get_optional_authenticated_user("Bearer valid_token")
+    assert result is not None
+    assert result.uid == "user_opt_1"
+
+
+def test_missing_credentials_produces_clear_error():
+    """When Firebase is unconfigured, token verification produces clear error pointing to environment variables."""
+    # Temporarily remove mock verifier and apps
+    original_verifier = firebase_auth_service._mock_verifier
+    original_app = firebase_auth_service._app
+    try:
+        firebase_auth_service._mock_verifier = None
+        firebase_auth_service._app = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            firebase_auth_service.verify_token("some_token")
+        assert exc_info.value.status_code == 503
+        detail = exc_info.value.detail
+        assert "FIREBASE_PROJECT_ID" in detail
+        assert "FIREBASE_CLIENT_EMAIL" in detail
+        assert "FIREBASE_PRIVATE_KEY" in detail
+    finally:
+        firebase_auth_service._mock_verifier = original_verifier
+        firebase_auth_service._app = original_app

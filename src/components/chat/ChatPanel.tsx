@@ -93,7 +93,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setShowHistoryDrawer(true);
     setLoadingHistory(true);
     try {
-      const token = await getIdToken();
+      const token = user ? await getIdToken() : null;
       if (token) {
         const list = await fetchConversations(token);
         if (list) setSavedConversations(list);
@@ -108,7 +108,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleSelectPastConversation = async (convId: string) => {
     setLoadingHistory(true);
     try {
-      const token = await getIdToken();
+      const token = user ? await getIdToken() : null;
       if (token) {
         const hist = await fetchConversationHistory(convId, token);
         if (hist) {
@@ -152,7 +152,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setIsLoading(true);
 
     try {
-      const token = await getIdToken();
+      const token = user ? await getIdToken() : null;
       const response = await sendChatMessage(clean, conversationId, activeAuditId, token);
 
       if (response) {
@@ -160,16 +160,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           setConversationId(response.conversationId);
         }
         setMessages((prev) => [...prev, response]);
-      } else {
-        throw new Error('Failed to reach assistant');
       }
-    } catch {
+    } catch (err: unknown) {
       setLastFailedMessage(clean);
+      const errorContent =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not connect to Inkloom AI Assistant. Please check your network and try again.';
       const errorMsg: ChatMessage = {
         id: generateMessageId('err'),
         conversationId: conversationId || '',
         role: 'assistant',
-        content: 'Could not connect to Inkloom AI Assistant. Please check your network and try again.',
+        content: errorContent,
         createdAt: getIsoTimestamp(),
         isError: true,
       };

@@ -51,6 +51,7 @@ class InMemoryRateLimiter:
 
 
 rate_limiter = InMemoryRateLimiter(limit=settings.AUTH_RATE_LIMIT_PER_MINUTE)
+chat_rate_limiter = InMemoryRateLimiter(limit=settings.CHAT_RATE_LIMIT_PER_MINUTE)
 
 
 class FirebaseAuthService:
@@ -60,13 +61,18 @@ class FirebaseAuthService:
     """
     def __init__(self):
         self._app: Optional[firebase_admin.App] = None
+        self._has_credentials: bool = False
         self._mock_verifier = None
         self.initialize()
 
     def initialize(self):
         if self._app is not None or firebase_admin._apps:
-            self._app = firebase_admin.get_app()
-            return
+            try:
+                self._app = firebase_admin.get_app()
+                self._has_credentials = True
+                return
+            except Exception:
+                pass
 
         try:
             # 1. Check if a local service-account JSON path is provided and exists
@@ -75,6 +81,7 @@ class FirebaseAuthService:
                 if cred_path.exists():
                     cred = credentials.Certificate(str(cred_path))
                     self._app = firebase_admin.initialize_app(cred)
+                    self._has_credentials = True
                     logger.info("Firebase Admin initialized using credentials file.")
                     return
                 else:
@@ -86,7 +93,7 @@ class FirebaseAuthService:
                 and settings.FIREBASE_CLIENT_EMAIL
                 and settings.FIREBASE_PRIVATE_KEY
             ):
-                private_key = settings.FIREBASE_PRIVATE_KEY.replace("\\n", "\n")
+                private_key = settings.FIREBASE_PRIVATE_KEY.strip("\"'").replace("\\n", "\n")
                 cred_dict = {
                     "type": "service_account",
                     "project_id": settings.FIREBASE_PROJECT_ID,
@@ -96,25 +103,32 @@ class FirebaseAuthService:
                 }
                 cred = credentials.Certificate(cred_dict)
                 self._app = firebase_admin.initialize_app(cred)
+                self._has_credentials = True
                 logger.info("Firebase Admin initialized using environment service-account.")
                 return
 
-            # 3. Check if only Project ID is provided (e.g. for default credentials / public keys)
+            # 3. Inform if Project ID is set without service account credentials
             if settings.FIREBASE_PROJECT_ID:
-                self._app = firebase_admin.initialize_app(
-                    options={"projectId": settings.FIREBASE_PROJECT_ID}
+                logger.info(
+                    "FIREBASE_PROJECT_ID '%s' provided without service account credentials. "
+                    "Configure FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY for live token verification.",
+                    settings.FIREBASE_PROJECT_ID,
                 )
-                logger.info("Firebase Admin initialized with projectId: %s", settings.FIREBASE_PROJECT_ID)
+                self._app = None
+                self._has_credentials = False
                 return
 
             logger.info("Firebase Admin not configured with credentials. Running in unconfigured/mock-ready mode.")
+            self._app = None
+            self._has_credentials = False
         except Exception as e:
             logger.warning("Could not initialize Firebase Admin SDK: %s", str(e))
             self._app = None
+            self._has_credentials = False
 
     @property
     def is_configured(self) -> bool:
-        return self._app is not None or self._mock_verifier is not None
+        return (self._app is not None and self._has_credentials) or self._mock_verifier is not None
 
     def set_mock_verifier(self, verifier_fn):
         """Allows test suites to mock verification safely without live Firebase network calls."""
@@ -169,7 +183,11 @@ class FirebaseAuthService:
         if not self._app and not firebase_admin._apps:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Firebase Authentication is not configured on the server. Please check FIREBASE_PROJECT_ID.",
+                detail=(
+                    "Firebase Authentication is not configured on the server. "
+                    "Please set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY "
+                    "(or FIREBASE_CREDENTIALS_PATH) in the backend environment."
+                ),
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -225,6 +243,16 @@ class FirebaseAuthService:
         except HTTPException:
             raise
         except Exception as e:
+            if "DefaultCredentialsError" in type(e).__name__:
+                logger.error("Missing Google Application Default Credentials for Firebase Admin: %s", str(e))
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "Firebase Admin service-account credentials are missing on the server. "
+                        "Please set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY."
+                    ),
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             # Log general exception without logging token or sensitive payload
             logger.warning("Token verification failed: %s", type(e).__name__)
             raise HTTPException(
@@ -303,6 +331,29 @@ def get_optional_user(token: Optional[str] = Header(None, alias="Authorization")
         return None
 
 
+def get_optional_authenticated_user(
+    token: Optional[str] = Header(None, alias="Authorization"),
+) -> Optional[AuthenticatedUser]:
+    """
+    Optional authentication dependency for endpoints that support safe public access
+    while strictly verifying credentials whenever an Authorization header is attached.
+    - If Authorization header is omitted or empty: returns None (public access).
+    - If Authorization header is provided: strictly verifies the Bearer token and raises HTTP 401/403/503 if invalid.
+    """
+    if not token or not token.strip():
+        return None
+
+    parts = token.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header format. Expected 'Bearer <token>'.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return firebase_auth_service.verify_token(parts[1])
+
+
 def require_verified_user(user: AuthenticatedUser = Depends(get_current_user)) -> AuthenticatedUser:
     """
     Enforces authentication AND email verification before granting access.
@@ -321,11 +372,33 @@ def check_auth_rate_limit(request: Request):
     Protects against automated credential-stuffing and DOS attacks.
     """
     client_ip = request.client.host if request.client else "unknown"
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
     key = f"{client_ip}:{request.url.path}"
     if not rate_limiter.is_allowed(key):
         logger.warning("Auth rate limit exceeded for client: %s on %s", client_ip, request.url.path)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many authentication requests from this client. Please wait 60 seconds.",
+            headers={"Retry-After": "60"},
+        )
+
+
+def check_chat_rate_limit(request: Request):
+    """
+    Sliding-window rate limiter for the Inkloom AI Assistant chat endpoint.
+    Restricts request volume per client IP to mitigate automated abuse and resource exhaustion.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    key = f"{client_ip}:chat"
+    if not chat_rate_limiter.is_allowed(key):
+        logger.warning("Chat rate limit exceeded for client: %s", client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many chat messages from this client. Please wait 60 seconds before sending another message.",
             headers={"Retry-After": "60"},
         )

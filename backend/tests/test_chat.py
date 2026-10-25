@@ -86,20 +86,68 @@ def client():
     firebase_auth_service.set_mock_verifier(None)
 
 
-def test_chat_unauthenticated_rejected(client: TestClient):
-    """Chat endpoint rejects unauthenticated requests with HTTP 401."""
-    resp = client.post("/api/chat", json={"message": "Hello"})
+def test_chat_unauthenticated_public_access_succeeds(client: TestClient):
+    """Safe public chat allows unauthenticated visitors to query the assistant without 401."""
+    resp = client.post("/api/chat", json={"message": "How does Inkloom AI work?"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "conversationId" in data
+    assert data["conversationId"].startswith("conv_pub_")
+    assert data["role"] == "assistant"
+    assert "Inkloom AI" in data["content"]
+    assert len(data.get("suggestedPrompts", [])) > 0
+
+    # Ensure no conversation was persisted to database for anonymous user
+    db = TestingSessionLocal()
+    try:
+        from backend.app.models.db_models import ConversationModel
+        conv = db.query(ConversationModel).filter(ConversationModel.id == data["conversationId"]).first()
+        assert conv is None
+    finally:
+        db.close()
+
+
+def test_chat_conversations_unauthenticated_rejected(client: TestClient):
+    """Protected conversation history endpoints strictly reject unauthenticated calls with HTTP 401."""
+    # List conversations
+    resp = client.get("/api/chat/conversations")
+    assert resp.status_code == 401
+    assert "Missing Authorization header" in resp.json()["detail"]
+
+    # Get conversation history
+    resp = client.get("/api/chat/conversations/conv_some_id")
+    assert resp.status_code == 401
+
+    # Delete conversation
+    resp = client.delete("/api/chat/conversations/conv_some_id")
     assert resp.status_code == 401
 
 
 def test_chat_invalid_token_rejected(client: TestClient):
-    """Chat endpoint rejects invalid bearer tokens with HTTP 401."""
+    """Chat endpoint rejects invalid bearer tokens with HTTP 401 when Authorization header is supplied."""
     resp = client.post(
         "/api/chat",
         headers={"Authorization": "Bearer invalid_garbage_token"},
         json={"message": "Hello"},
     )
     assert resp.status_code == 401
+
+
+def test_chat_rate_limiting_enforced(client: TestClient):
+    """Chat endpoint enforces sliding-window rate limiting on repetitive requests."""
+    from backend.app.services.firebase_auth import chat_rate_limiter
+    # Artificially exhaust client rate limit
+    test_ip = "testclient"
+    key = f"{test_ip}:chat"
+    for _ in range(settings.CHAT_RATE_LIMIT_PER_MINUTE):
+        chat_rate_limiter.requests[key].append(9999999999.0)
+
+    resp = client.post("/api/chat", json={"message": "Should be rate limited"})
+    assert resp.status_code == 429
+    assert "Too many chat messages" in resp.json()["detail"]
+
+    # Reset limiter for other tests
+    chat_rate_limiter.requests.clear()
 
 
 def test_chat_empty_message_rejected(client: TestClient):
