@@ -544,3 +544,50 @@ def test_runtime_wire_level_init_db_rejects_forbidden_database(monkeypatch):
         db_service.init_db()
 
 
+def test_supabase_session_pooler_url_normalization_preserves_sslmode(monkeypatch):
+    """Verify that a valid Supabase Session Pooler URL with sslmode=require is preserved with psycopg scheme."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    session_pooler_url = (
+        "postgresql://postgres.tluzfifrrqjwdjghwcck:dummy_pw@"
+        "aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres?sslmode=require"
+    )
+    monkeypatch.setattr(settings, "DATABASE_URL", session_pooler_url)
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "aws-0-ap-northeast-2.pooler.supabase.com")
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_DB_NAME", "postgres")
+    monkeypatch.setattr(settings, "SUPABASE_PROJECT_REF", "tluzfifrrqjwdjghwcck")
+    monkeypatch.setattr(settings, "ENFORCE_SSL", True)
+
+    normalized = get_normalized_database_url()
+    assert normalized.startswith("postgresql+psycopg://")
+    assert "sslmode=require" in normalized
+    assert "aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres" in normalized
+    assert "postgres.tluzfifrrqjwdjghwcck" in normalized
+
+
+def test_quoted_and_duplicated_database_url_normalization(monkeypatch):
+    """Verify that quoted URLs and accidental duplicated path segments are normalized cleanly without weakening checks."""
+    from backend.app.config import settings
+    from backend.app.services.database import get_normalized_database_url
+
+    # Accidental duplicate host/port segment in database path
+    duplicated_url = (
+        '"postgresql+psycopg://postgres.tluzfifrrqjwdjghwcck:dummy_pw@'
+        'aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres@'
+        'aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres?sslmode=require"'
+    )
+    monkeypatch.setattr(settings, "DATABASE_URL", duplicated_url)
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_HOST", "aws-0-ap-northeast-2.pooler.supabase.com")
+    monkeypatch.setattr(settings, "EXPECTED_SUPABASE_DB_NAME", "postgres")
+    monkeypatch.setattr(settings, "SUPABASE_PROJECT_REF", "tluzfifrrqjwdjghwcck")
+    monkeypatch.setattr(settings, "ENFORCE_SSL", True)
+
+    normalized = get_normalized_database_url()
+    assert normalized == (
+        "postgresql+psycopg://postgres.tluzfifrrqjwdjghwcck:dummy_pw@"
+        "aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres?sslmode=require"
+    )
+
+
+

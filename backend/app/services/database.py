@@ -111,15 +111,23 @@ def get_normalized_database_url() -> str:
     """
     db_url = settings.DATABASE_URL
     if db_url and db_url.strip():
-        url = db_url.strip()
+        url = db_url.strip().strip("'\"").strip()
         # SQLAlchemy 2.0 requires postgresql:// instead of legacy postgres://
         if url.startswith("postgres://"):
             url = "postgresql://" + url[len("postgres://"):]
-        # Ensure psycopg driver is used if generic postgresql:// is provided
+        # Ensure psycopg driver is used if generic postgresql:// or legacy postgresql+psycopg2 is provided
         if url.startswith("postgresql://") and not url.startswith("postgresql+"):
             url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        elif url.startswith("postgresql+psycopg2://"):
+            url = "postgresql+psycopg://" + url[len("postgresql+psycopg2://"):]
 
         parsed = make_url(url)
+        # Clean accidental duplicated host/port in database path (e.g. /postgres@host:5432/postgres)
+        if parsed.database and ("@" in parsed.database or "/" in parsed.database):
+            clean_db = parsed.database.split("/")[-1].strip()
+            parsed = parsed.set(database=clean_db)
+            url = parsed.render_as_string(hide_password=False)
+
         if parsed.get_backend_name() == "postgresql":
             validate_database_target(parsed)
         return url
